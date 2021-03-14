@@ -43,14 +43,14 @@ namespace VVVV.Hosting.Factories
         protected IHDEHost FHost;
 
         [Import]
-        private StartableRegistry FStartableRegistry;
+        protected StartableRegistry FStartableRegistry;
 
         [Import]
-        private IORegistry FIORegistry; 
+        protected IORegistry FIORegistry; 
 #pragma warning restore
         
-        private readonly Dictionary<IPluginBase, PluginContainer> FPluginContainers;
-        private readonly CompositionContainer FParentContainer;
+        protected readonly Dictionary<IPluginBase, PluginContainer> FPluginContainers;
+        protected readonly CompositionContainer FParentContainer;
         private readonly Type FReflectionOnlyPluginBaseType;
         
         public Dictionary<string, IPluginBase> FNodesPath = new Dictionary<string, IPluginBase>();
@@ -149,72 +149,75 @@ namespace VVVV.Hosting.Factories
             
             // Remember the current directory for later assembly resolution
             FCurrentAssemblyDir = Path.GetDirectoryName(filename);
-            
-            var assembly = Assembly.ReflectionOnlyLoadFrom(filename);
-            foreach (var type in assembly.GetExportedTypes())
+
+            try
             {
-                if (!type.IsAbstract && !type.IsGenericTypeDefinition && FReflectionOnlyPluginBaseType.IsAssignableFrom(type))
-                {
-                    var attribute = GetPluginInfoAttributeData(type);
-                    
-                    if (attribute != null)
-                    {
-                        // V2
-                        var nodeInfo = ExtractNodeInfoFromAttributeData(attribute, sourcefilename);
-                        nodeInfo.Arguments = type.FullName;
-                        nodeInfo.Type = NodeType.Plugin;
-                        nodeInfos.Add(nodeInfo);
-                    }
-                    else
-                    {
-                        // V1. See below.
-                        containsV1Plugins = true;
-                    }
-                }
-
-
-                bool nonlazy = FStartableRegistry.ProcessType(type, assembly);
-
-                if (nonlazy)
-                {
-                    nonLazyStartable = true;
-                }
-            }
-            
-            // V1 plugins need to be loaded in LoadFrom context in order to instantiate the
-            // static PluginInfo field. Type instantiation is not possible in
-            // ReflectionOnly context.
-            // TODO: This is very slow. Think about caching.
-            if (containsV1Plugins)
-            {
-                assembly = Assembly.LoadFrom(filename);
+                var assembly = Assembly.ReflectionOnlyLoadFrom(filename);
                 foreach (var type in assembly.GetExportedTypes())
                 {
-                    if (!type.IsAbstract && !type.IsGenericTypeDefinition && typeof(IPluginBase).IsAssignableFrom(type))
+                    if (!type.IsAbstract && !type.IsGenericTypeDefinition && FReflectionOnlyPluginBaseType.IsAssignableFrom(type))
                     {
-                        var nodeInfo = ExtractNodeInfoFromType(type, sourcefilename);
-                        if (nodeInfo != null)
+                        var attribute = GetPluginInfoAttributeData(type);
+
+                        if (attribute != null)
                         {
+                            // V2
+                            var nodeInfo = ExtractNodeInfoFromAttributeData(attribute, sourcefilename);
                             nodeInfo.Arguments = type.FullName;
-                            nodeInfo.Type = NodeType.Plugin;
                             nodeInfos.Add(nodeInfo);
+                        }
+                        else
+                        {
+                            // V1. See below.
+                            containsV1Plugins = true;
+                        }
+                    }
+
+
+                    bool nonlazy = FStartableRegistry.ProcessType(type, assembly);
+
+                    if (nonlazy)
+                    {
+                        nonLazyStartable = true;
+                    }
+                }
+
+                // V1 plugins need to be loaded in LoadFrom context in order to instantiate the
+                // static PluginInfo field. Type instantiation is not possible in
+                // ReflectionOnly context.
+                // TODO: This is very slow. Think about caching.
+                if (containsV1Plugins)
+                {
+                    assembly = Assembly.LoadFrom(filename);
+                    foreach (var type in assembly.GetExportedTypes())
+                    {
+                        if (!type.IsAbstract && !type.IsGenericTypeDefinition && typeof(IPluginBase).IsAssignableFrom(type))
+                        {
+                            var nodeInfo = ExtractNodeInfoFromType(type, sourcefilename);
+                            if (nodeInfo != null)
+                            {
+                                nodeInfo.Arguments = type.FullName;
+                                nodeInfos.Add(nodeInfo);
+                            }
                         }
                     }
                 }
-            }
 
-            if (nonLazyStartable)
-            {
-                var assemblyload = Assembly.LoadFrom(filename);
-                FStartableRegistry.ProcessAssembly(assemblyload);
+                if (nonLazyStartable)
+                {
+                    var assemblyload = Assembly.LoadFrom(filename);
+                    FStartableRegistry.ProcessAssembly(assemblyload);
+                }
             }
-            
-            
-            foreach (var nodeInfo in nodeInfos)
+            finally
             {
-                nodeInfo.Factory = this;
-                if (commitUpdates)
-                    nodeInfo.CommitUpdate();
+                foreach (var nodeInfo in nodeInfos)
+                {
+                    nodeInfo.Type = NodeType.Plugin;
+                    nodeInfo.Factory = this;
+                    if (commitUpdates)
+                        nodeInfo.CommitUpdate();
+                }
             }
         }
 
@@ -256,7 +259,9 @@ namespace VVVV.Hosting.Factories
                 namedArguments.Remove("InitialBoxWidth");
                 namedArguments.Remove("InitialBoxHeight");
             }
-            
+            else
+                nodeInfo.InitialBoxSize = new Size(200, 200);
+
             if (namedArguments.ContainsKey("InitialComponentMode"))
             {
                 nodeInfo.InitialComponentMode = (TComponentMode) namedArguments["InitialComponentMode"];
@@ -311,7 +316,7 @@ namespace VVVV.Hosting.Factories
             return nodeInfo;
         }
 
-        public Type GetPluginType(INodeInfo nodeInfo)
+        public virtual Type GetPluginType(INodeInfo nodeInfo)
         {
             string assemblyLocation = string.Empty;
             var isUpToDate = GetAssemblyLocation(nodeInfo, out assemblyLocation);
@@ -319,7 +324,7 @@ namespace VVVV.Hosting.Factories
             return assembly.GetType(nodeInfo.Arguments);
         }
         
-        public IPluginBase CreatePlugin(INodeInfo nodeInfo, IPluginHost2 pluginHost)
+        public virtual IPluginBase CreatePlugin(INodeInfo nodeInfo, IPluginHost2 pluginHost)
         {
             IPluginBase plugin = null;
             
@@ -402,7 +407,7 @@ namespace VVVV.Hosting.Factories
             return plugin;
         }
         
-        public void DisposePlugin(IPluginBase plugin)
+        public virtual void DisposePlugin(IPluginBase plugin)
         {
             //Send event before delete
             if (this.PluginDeleted != null) { this.PluginDeleted(plugin); }
@@ -460,7 +465,7 @@ namespace VVVV.Hosting.Factories
             }
         }
         
-        private static void AssignOptionalPluginInterfaces(IInternalPluginHost pluginHost, IPluginBase pluginBase)
+        protected static void AssignOptionalPluginInterfaces(IInternalPluginHost pluginHost, IPluginBase pluginBase)
         {
             var win32Window = pluginBase as IWin32Window;
             if (win32Window != null)
@@ -508,48 +513,56 @@ namespace VVVV.Hosting.Factories
         // From http://www.anastasiosyal.com/archive/2007/04/17/3.aspx
         private static bool IsDotNetAssembly(string fileName)
         {
-            using (FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read))
+            if (string.IsNullOrWhiteSpace(fileName))
+                return false;
+            try
             {
-                try
+                using (FileStream fs = new FileStream(fileName, FileMode.Open, FileAccess.Read))
                 {
-                    using (BinaryReader binReader = new BinaryReader(fs))
+                    try
                     {
-                        try
+                        using (BinaryReader binReader = new BinaryReader(fs))
                         {
-                            fs.Position = 0x3C; //PE Header start offset
-                            uint headerOffset = binReader.ReadUInt32();
-
-                            fs.Position = headerOffset + 0x18;
-                            UInt16 magicNumber = binReader.ReadUInt16();
-
-                            int dictionaryOffset;
-                            switch (magicNumber)
+                            try
                             {
+                                fs.Position = 0x3C; //PE Header start offset
+                                uint headerOffset = binReader.ReadUInt32();
+
+                                fs.Position = headerOffset + 0x18;
+                                UInt16 magicNumber = binReader.ReadUInt16();
+
+                                int dictionaryOffset;
+                                switch (magicNumber)
+                                {
                                     case 0x010B: dictionaryOffset = 0x60; break;
                                     case 0x020B: dictionaryOffset = 0x70; break;
-                                default:
-                                    throw new BadImageFormatException("Invalid Image Format");
+                                    default:
+                                        return false;
+                                }
+
+                                //position to RVA 15
+                                fs.Position = headerOffset + 0x18 + dictionaryOffset + 0x70;
+
+
+                                //Read the value
+                                uint rva15value = binReader.ReadUInt32();
+                                return rva15value != 0;
                             }
-
-                            //position to RVA 15
-                            fs.Position = headerOffset + 0x18 + dictionaryOffset + 0x70;
-
-
-                            //Read the value
-                            uint rva15value = binReader.ReadUInt32();
-                            return rva15value != 0;
-                        }
-                        finally
-                        {
-                            binReader.Close();
+                            finally
+                            {
+                                binReader.Close();
+                            }
                         }
                     }
+                    finally
+                    {
+                        fs.Close();
+                    }
                 }
-                finally
-                {
-                    fs.Close();
-                }
-
+            }
+            catch (FileNotFoundException)
+            {
+                return false;
             }
         }
     }

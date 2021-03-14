@@ -13,38 +13,56 @@ using VVVV.Core.Logging;
 namespace VVVV.Nodes.Generic
 {
 
-	public class SetSlice<T> : IPluginEvaluate
-	{
-		#region fields & pins
+    public class SetSlice<T> : IPluginEvaluate, IPartImportsSatisfiedNotification
+    {
+        #region fields & pins
 #pragma warning disable 0649
-        [Input("Spread", BinName = "Bin Size", BinSize = 1, BinOrder = 1)]
-        ISpread<ISpread<T>> FSpread;
+        protected IIOContainer<ISpread<ISpread<T>>> FSpreadContainer;
+        protected IIOContainer<ISpread<T>> FInputContainer;
 
-        [Input("Input")]
-        ISpread<T> FInput;
-
-        [Input("Index", Order = 2)]
+        [Input("Index", Order = 100)]
         ISpread<int> FIndex;
 
-        [Output("Output")]
-        ISpread<ISpread<T>> FOutput; 
-#pragma warning restore
-		#endregion fields & pins
-		
-		//called when data for any output pin is requested
-		public void Evaluate(int SpreadMax)
-		{
-			FOutput.AssignFrom(FSpread);
+        protected IIOContainer<ISpread<ISpread<T>>> FOutputContainer;
 
-			int incr=0;
-			for (int i=0; i<FIndex.SliceCount; i++)
-			{
-				int ind = FIndex[i];
-				for (int s=0; s<FOutput[ind].SliceCount; s++)
-					FOutput[ind][s]=FInput[incr+s];
-				incr+=FOutput[ind].SliceCount;
-			}
-		}
-	}
-	
+        [Import]
+        IIOFactory FFactory;
+#pragma warning restore
+        #endregion fields & pins
+
+        public void OnImportsSatisfied()
+        {
+            FSpreadContainer = FFactory.CreateIOContainer<ISpread<ISpread<T>>>(
+                new InputAttribute("Spread") { BinName = "Bin Size", BinSize = 1, BinOrder = 1 });
+
+            FInputContainer = FFactory.CreateIOContainer<ISpread<T>>(
+                new InputAttribute("Input"));
+
+            FOutputContainer = FFactory.CreateIOContainer<ISpread<ISpread<T>>>(
+                new OutputAttribute("Output"));
+        }
+
+        //called when data for any output pin is requested
+        public virtual void Evaluate(int spreadMax)
+        {
+            var inputSpread = FSpreadContainer.IOObject;
+            var outputSpread = FOutputContainer.IOObject;
+            var input = FInputContainer.IOObject;
+
+            var count = outputSpread.SliceCount = inputSpread.SliceCount;
+            for (int c = 0; c < count; c++) //copy in to out first
+                outputSpread[c].AssignFrom(inputSpread[c]);
+
+            var incr = 0;
+            for (int i=0; i<FIndex.SliceCount; i++) //loop through all indices to set
+            {
+                var ind = VMath.Zmod(FIndex[i], count);
+                var osCount = outputSpread[ind].SliceCount = inputSpread[ind].SliceCount;
+                for (int s = 0; s < osCount; s++)
+                    outputSpread[ind][s] = input[incr + s];
+                incr += osCount;
+            }
+        }
+    }
+
 }

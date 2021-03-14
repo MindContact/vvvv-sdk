@@ -9,7 +9,7 @@ using VVVV.Utils.VColor;
 
 namespace VVVV.Nodes.Generic
 {
-    public abstract class FrameDelayNode<T> : IPluginEvaluate, IPartImportsSatisfiedNotification, IDisposable, IPluginFeedbackLoop
+    public abstract class FrameDelayNode<T> : IPluginEvaluate, IPartImportsSatisfiedNotification, IDisposable, IPluginFeedbackLoop, IPluginAwareOfEvaluation
     {
         [Config("Count", DefaultValue = 1, MinValue = 1, IsSingle = true)]
         public IDiffSpread<int> CountIn;
@@ -26,6 +26,14 @@ namespace VVVV.Nodes.Generic
 
         [Import]
         protected IMainLoop FMainLoop;
+
+        readonly Copier<T> FCopier;
+
+        public FrameDelayNode(Copier<T> copier)
+        {
+            FCopier = copier;
+        }
+        private readonly Spread<ISpread<T>> FBuffers = new Spread<ISpread<T>>();
 
         public void OnImportsSatisfied()
         {
@@ -52,6 +60,11 @@ namespace VVVV.Nodes.Generic
             ResizePinGroups(count, InputContainers, (i) => new InputAttribute(string.Format("Input {0}", i)) { AutoValidate = false });
             ResizePinGroups(count, DefaultContainers, (i) => new InputAttribute(string.Format("Default {0}", i)) { AutoValidate = false });
             ResizePinGroups(count, OutputContainers, (i) => new OutputAttribute(string.Format("Output {0}", i)));
+            FBuffers.Resize(
+                count,
+                i => new Spread<T>(1),
+                DisposeSpread
+            );
         }
 
         private static void DisposeSpread(ISpread<T> spread)
@@ -84,51 +97,64 @@ namespace VVVV.Nodes.Generic
             if (FFirstFrame || init)
             {
                 FFirstFrame = false;
-                for (int i = 0; i < OutputContainers.SliceCount; i++)
+                for (int i = 0; i < FBuffers.SliceCount; i++)
                 {
                     var defaultSpread = DefaultContainers[i].IOObject;
                     // Validate the default input
                     defaultSpread.Sync();
                     // And write it to the output
                     var outputSpread = OutputContainers[i].IOObject;
-                    outputSpread.AssignFrom(CloneSpread(defaultSpread));
+                    outputSpread.AssignFrom(FCopier.CopySpread(defaultSpread));
                 }
             }
             else
             {
-                // Do nothing here - we output the data from the last frame
+                for (int i = 0; i < FBuffers.SliceCount; i++)
+                {
+                    var buffer = FBuffers[i];
+                    // Write the cached result from the last frame
+                    var outputSpread = OutputContainers[i].IOObject;
+                    outputSpread.AssignFrom(buffer);
+                }
             }
         }
 
+        // We registered at mainloop. So this is called even when node is disabled 
         void HandleOnPrepareGraph(object sender, EventArgs e)
         {
             // Might trigger our Evaluate method if no one asked for the data of our outputs yet
             FIOFactory.PluginHost.Evaluate();
 
-            for (int i = 0; i < OutputContainers.SliceCount; i++)
+            // Let's do not evaluate anything in case of being turned off.
+            if (Stopped)
+                return;
+            
+            for (int i = 0; i < FBuffers.SliceCount; i++)
             {
                 var inputSpread = InputContainers[i].IOObject;
                 // Validate the regular input
                 inputSpread.Sync();
                 // And cache the result for the next frame
-                var outputSpread = OutputContainers[i].IOObject;
-                outputSpread.AssignFrom(CloneSpread(inputSpread));
+                FBuffers[i] = FCopier.CopySpread(inputSpread);
             }
         }
 
-        protected virtual ISpread<T> CloneSpread(ISpread<T> spread)
+        bool Stopped;
+
+        /// <summary>
+        /// Node will get evaluated this frame and the coming frames.
+        /// </summary>
+        public void TurnOn()
         {
-            var clonedSpread = new Spread<T>(spread.SliceCount);
-            var clonedBuffer = clonedSpread.Stream.Buffer;
-            var buffer = spread.Stream.Buffer;
-            for (int i = 0; i < spread.SliceCount; i++)
-            {
-                clonedBuffer[i] = CloneSlice(buffer[i]);
-            }
-            return clonedSpread;
+            Stopped = false;
         }
 
-        protected abstract T CloneSlice(T slice);
+        /// <summary>
+        /// Node will not get evaluated this frame and the coming frames.
+        /// </summary>
+        public void TurnOff()
+        {
+            Stopped = true;
+        }
     }
-
 }

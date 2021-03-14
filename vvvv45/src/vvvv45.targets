@@ -1,66 +1,145 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="deploy.targets" />
   <UsingTask AssemblyFile="$(MSBuildThisFileDirectory)\..\..\tools\VersionInfo.exe" TaskName="VVVV.Tools.MSBuild.GetVersionInfo" />
-  
-  <!-- Build -->
-  <Target Name="Build" DependsOnTargets="$(BuildDependsOn)" />
-  <Target Name="CoreBuild">
-    <!-- Copy shared dependencies to lib/core -->
-    <CreateItem Include="$(PluginsOutputDir)Sanford*">
-      <Output TaskParameter="Include" ItemName="_SharedDependencies_" />
-    </CreateItem>
-    <Copy SourceFiles="@(_SharedDependencies_)" DestinationFolder="$(CoreOutputDir)" />
-    <!-- Delete all files which are already in lib/core -->
-    <CreateItem Include="$(CoreOutputDir)**\*.*">
-      <Output TaskParameter="Include" ItemName="CoreOutputFiles" />
-    </CreateItem>
-    <Delete Files="@(CoreOutputFiles->'$(PluginsOutputDir)%(RecursiveDir)%(Filename)%(Extension)')" />
-    <Delete Files="@(CoreOutputFiles->'$(EditorsOutputDir)%(RecursiveDir)%(Filename)%(Extension)')" />
-    <!-- Create lib/*.dtd file -->
-    <GetVersionInfo File="$(MSBuildThisFileDirectory)..\vvvv.exe">
-      <Output TaskParameter="ReturnValue" PropertyName="VersionInfo" />
+  <UsingTask AssemblyFile="$(MSBuildThisFileDirectory)\..\..\tools\VersionInfo.exe" TaskName="VVVV.Tools.MSBuild.GetPlatformFromBinary" />
+
+  <!-- VVVV_VersionInfo -->
+  <Target Name="VVVV_VersionInfo">
+    <GetVersionInfo File="$(VVVVExe)">
+      <!-- 38.2-4322 preview -->
+      <Output TaskParameter="NewVersionString" PropertyName="VVVV_VersionInfo" />
+      <!-- 50alpha38.2 -->
+      <Output TaskParameter="OldVersionString" PropertyName="VVVV_VersionInfo_Old" />
+      <Output TaskParameter="IsPreview" PropertyName="VVVV_IsPreview" />
     </GetVersionInfo>
+    <GetPlatformFromBinary File="$(VVVVExe)">
+      <!-- x64 -->
+      <Output TaskParameter="ReturnValue" PropertyName="VVVV_Platform" />
+    </GetPlatformFromBinary>
+    
+    <PropertyGroup>
+      <!-- beta -->
+      <VVVV_Environment>beta</VVVV_Environment>
+      <!-- 38.2-4322_preview -->
+      <VVVV_Version_OnDisk>$(VVVV_VersionInfo.Replace(' ', '_'))</VVVV_Version_OnDisk>
+      <!-- 38.2-4322 preview x64 -->
+      <VVVV_VersionAndPlatform>$(VVVV_VersionInfo) $(VVVV_Platform)</VVVV_VersionAndPlatform>
+      <!-- 38.2-4322_preview_x64 -->
+      <VVVV_VersionAndPlatform_OnDisk>$(VVVV_VersionAndPlatform.Replace(' ', '_'))</VVVV_VersionAndPlatform_OnDisk>
+    </PropertyGroup>
+
+    <PropertyGroup>
+      <!-- vvvv beta -->
+      <VVVV_AppName>vvvv beta</VVVV_AppName>
+      <!-- vvvv beta 38.2 preview -->
+      <VVVV_AppNameWithVersion>$(VVVV_AppName) $(VVVV_VersionInfo) $(VVVV_Platform)</VVVV_AppNameWithVersion>
+      <!-- vvvv_beta_38.2-4322_preview_x64 -->
+      <VVVV_NameVersionPlatform_OnDisk>vvvv_beta_$(VVVV_VersionAndPlatform_OnDisk)</VVVV_NameVersionPlatform_OnDisk>
+      <!-- addons_38.2-4322_preview_x64 -->
+      <Addons_NameVersionPlatform_OnDisk>addons_$(VVVV_VersionAndPlatform_OnDisk)</Addons_NameVersionPlatform_OnDisk>
+    </PropertyGroup>
+  
+    <PropertyGroup Condition="$(VVVV_IsPreview)">
+      <!-- beta-preview -->
+      <VVVV_Environment>beta-preview</VVVV_Environment>
+      <!-- vvvv beta -->
+      <VVVV_AppName>vvvv beta preview</VVVV_AppName>
+    </PropertyGroup>
+  </Target>
+
+  <!-- Generates all the filenames used by the Build, Deploy and Zip tasks -->
+  <Target Name="VVVV_GenerateFileNames" DependsOnTargets="VVVV_VersionInfo">
+    <PropertyGroup>
+      <CoreDir>$(RootDir)lib\core\</CoreDir>
+      <CommonDir>$(RootDir)..\common\</CommonDir>
+      <PluginsDir>$(RootDir)lib\nodes\plugins\</PluginsDir>
+      <EditorsDir>$(RootDir)lib\nodes\editors\</EditorsDir>
+      <!-- vvvv_beta-preview_38.2_x64 -->
+      <DeployName>$(DeployPrefix)_$(VVVV_VersionAndPlatform_OnDisk)</DeployName>
+      <DeployDir Condition="'$(DeployDir)' == ''">$(DeployBaseDir)$(DeployName)\</DeployDir>
+      <DeployedVVVVExe>$(DeployDir)vvvv.exe</DeployedVVVVExe>
+      <ZipFileName>$(DeployBaseDir)$(DeployName).zip</ZipFileName>
+    </PropertyGroup>
+  </Target>
+
+  <!-- Build -->
+  <Target Name="VVVV_Build" DependsOnTargets="VVVV_GenerateFileNames" AfterTargets="Build">
+    <PropertyGroup>
+      <_ExeConfigFile>$(OutputPath)vvvv45.exe.config</_ExeConfigFile>
+    </PropertyGroup>
+    <!-- Copy shared dependencies to lib/core -->
     <ItemGroup>
-      <DTDFiles Include="$(MSBuildThisFileDirectory)..\lib\*.dtd" />
+      <_SharedDependencies_ Include="$(PluginsDir)Sanford*" />
+      <_SharedDependencies_ Include="$(CommonDir)src\thirdparty\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_SharedDependencies_)" DestinationFolder="$(CoreDir)" />
+    <!-- Delete all files which are already in lib/core -->
+    <CreateItem Include="$(CoreDir)**\*.*">
+      <Output TaskParameter="Include" ItemName="CoreFiles" />
+    </CreateItem>
+    <Delete Files="@(CoreFiles->'$(PluginsDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Delete Files="@(CoreFiles->'$(EditorsDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+    <!-- Create lib/*.dtd file -->
+    <ItemGroup>
+      <DTDFiles Include="$(RootDir)lib\*.dtd" />
     </ItemGroup>
     <Delete Files="@(DTDFiles)" />
-    <Copy SourceFiles="$(MSBuildThisFileDirectory)vvvv45.dtd" DestinationFiles="$(MSBuildThisFileDirectory)..\lib\$(VersionInfo).dtd" />
+    <Copy SourceFiles="$(MSBuildThisFileDirectory)vvvv45.dtd" DestinationFiles="$(RootDir)lib\$(VVVV_VersionInfo_Old).dtd" />
+    <Copy SourceFiles="$(_ExeConfigFile)" DestinationFiles="$(OutputPath)..\..\vvvv.exe.config" SkipUnchangedFiles="true" Condition="Exists('$(_ExeConfigFile)')" />
+    <ItemGroup>
+      <DummyFiles Include="$(OutputPath)vvvv45.*" />
+    </ItemGroup>
+    <Delete Files="@(DummyFiles)" />
   </Target>
-  <Target Name="Rebuild" DependsOnTargets="$(RebuildDependsOn)" />
-  <Target Name="Clean" DependsOnTargets="$(CleanDependsOn)" />
+  
+  <!-- Deploy -->
+  <Target Name="VVVV_Deploy" DependsOnTargets="VVVV_GenerateFileNames;VVVV_Build" AfterTargets="Build" Condition=" '$(Configuration)' == 'Deploy' ">
+    <PropertyGroup>
+      <!-- Signing properties - not to be confused with strong name signing -->
+      <VVVVCertFile>..\..\..\vvvv-cert.p12</VVVVCertFile>
+      <SignToolTimestampServers>http://timestamp.comodoca.com/authenticode;http://timestamp.verisign.com/scripts/timstamp.dll;http://timestamp.globalsign.com/scripts/timstamp.dll</SignToolTimestampServers>
+    </PropertyGroup>
+    <!-- Let's not remove the directory since BuildAndInstallVLIntegration installed its packages there. -->
+    <!--<RemoveDir Directories="$(DeployDir)" />-->
+    <Message Text="Deploying to $(DeployDir)" Importance="High" />
+    <!-- Copy files to deploy directory (public/build/vvvv_VERSION) -->
+    <CreateItem Include="$(DeployInclude)" Exclude="$(DeployExclude)">
+      <Output ItemName="FilesToDeploy" TaskParameter="Include" />
+    </CreateItem>
+    <Copy SourceFiles="@(FilesToDeploy)"
+          DestinationFiles="@(FilesToDeploy->'$(DeployDir)%(RecursiveDir)%(Filename)%(Extension)')" 
+          SkipUnchangedFiles="true" 
+          OverwriteReadOnlyFiles="true" 
+          ContinueOnError="true" />
+    
+    <!-- Sign the exe -->
+    <ItemGroup>
+      <_SignExeFiles Include="$(DeployDir)*.exe" />
+    </ItemGroup>
+    <SignTool SignFiles="@(_SignExeFiles)" 
+              PfxFile="$(VVVVCertFile)" 
+              TimestampServer="$(SignToolTimestampServers)" 
+              Condition=" '$(DeploySignFiles)' == 'true' " />
+    
+    <!-- Set read-only flags -->
+    <CombinePath BasePath="$(DeployDir)" Paths="$(DeployReadOnlyFiles)">
+      <Output TaskParameter="CombinedPaths" ItemName="_DeployReadOnlyFiles"/>
+    </CombinePath>
+    <Exec Command="attrib +R &quot;%(_DeployReadOnlyFiles.Identity)&quot; /S /D" />
+    <!-- Set hidden flags -->
+    <CombinePath BasePath="$(DeployDir)" Paths="$(DeployHiddenFiles)">
+      <Output TaskParameter="CombinedPaths" ItemName="_DeployHiddenFiles" />
+    </CombinePath>
+    <Exec Command="attrib +H &quot;%(_DeployHiddenFiles.Identity)&quot;" />
+  </Target>
   
   <!-- Zip -->
-  <Target Name="Zip">
-    <CallTarget Targets="$(ZipSteps)" RunEachTargetSeparately="True" />
-  </Target>
-  <Target Name="_PreZip_">
-    <RemoveDir Directories="$(TempBaseDir)" />
-  </Target>
-  <Target Name="_Zip_">
-    <MakeDir Directories="$(ZipOutputDir)" />
-    <GetVersionInfo File="$(StartProgram)">
-      <Output TaskParameter="ReturnValue" PropertyName="VersionInfo" />
-    </GetVersionInfo>
-    <PropertyGroup>
-      <ZipTempDir Condition="'$(ZipTempDir)' == ''">$(TempBaseDir)$(ZipFileNamePrefix)_$(VersionInfo)_$(Platform)\</ZipTempDir>
-      <ZipFileName>$(ZipOutputDir)$(ZipFileNamePrefix)_$(VersionInfo)_$(Platform).zip</ZipFileName>
-      <TempVVVVExe>$(ZipTempDir)vvvv.exe</TempVVVVExe>
-    </PropertyGroup>
-    <CreateItem Include="$(ZipInclude)" Exclude="$(ZipExclude)">
-      <Output ItemName="OutputFiles" TaskParameter="Include" />
-    </CreateItem>
-    <Copy SourceFiles="@(OutputFiles)" DestinationFiles="@(OutputFiles->'$(ZipTempDir)%(RecursiveDir)%(Filename)%(Extension)')" />
-    <Exec Condition="'$(ZipReadOnlyFiles)' != ''"
-          Command="attrib +R &quot;$(ZipTempDir)$(ZipReadOnlyFiles)&quot; /S /D" />
-    <Exec Condition="'$(ZipHiddenFiles)' != ''"
-          Command="attrib +H &quot;$(ZipTempDir)$(ZipHiddenFiles)&quot;" />
-    <!-- /dx9ex flag fixes crash on build server, see: http://msdn.microsoft.com/en-us/library/windows/desktop/ff471598%28v=vs.85%29.aspx -->
-    <!-- Call /nodelist without any arguments to include native nodes -->
-    <Exec Condition="Exists('$(TempVVVVExe)')" Command="&quot;$(TempVVVVExe)&quot; /allowmultiple /nodelist" />
-    <!-- Call /nodelist with arguments to filter for specific directory -->
-    <Exec Condition="!Exists('$(TempVVVVExe)')" Command="&quot;$(VVVVExe)&quot; /allowmultiple /nodelist &quot;$(ZipTempDir)lib\nodes&quot;" />
+  <Target Name="Zip" DependsOnTargets="VVVV_GenerateFileNames">
+    <Message Text="Generating $(ZipFileName)" Importance="High" />
+    <Delete Files="$(ZipFileName)" />
     <!-- Because of http://msbuildtasks.tigris.org/issues/show_bug.cgi?id=148 we switched to cmd line call to 7-Zip. -->
-    <Exec Command="&quot;$(SevenZip)&quot; a -r &quot;$(ZipFileName)&quot; &quot;$(ZipTempDir)&quot;" />
+    <Exec Command="&quot;$(SevenZip)&quot; a -r &quot;$(ZipFileName)&quot; &quot;$(DeployDir)&quot;" />
     <!--
     <CreateItem Include="$(ZipTempDir)\**\*.*">
       <Output ItemName="ZipFiles" TaskParameter="Include" />
@@ -70,89 +149,5 @@
          ZipFileName="$(ZipFileName)" 
          ZipLevel="9" />
     -->
-  </Target>
-  <Target Name="_PostZip_">
-    <RemoveDir Directories="$(TempBaseDir)" />
-  </Target>
-
-  <!-- ARToolKitPlus -->
-  <Target Name="_CheckMinGW_">
-    <Error Text="The MinGW property must be set on the command line."
-           Condition="'$(MinGW)' == ''" />
-    <PropertyGroup>
-      <GCC>$(MinGW)bin\gcc.exe</GCC>
-      <AR>$(MinGW)bin\ar.exe</AR>
-    </PropertyGroup>
-  </Target>
-  <Target Name="_CompileARToolKitPlus_"
-          Inputs="@(ARToolKitPlusSourceFiles)"
-          Outputs="@(ARToolKitPlusObjectFiles)"
-          DependsOnTargets="_CheckMinGW_">
-    <Exec Command="$(GCC) $(ARToolKitPlusCompilerOptions) $(ARToolKitPlusCompilerIncludes) -c %(ARToolKitPlusSourceFiles.FullPath) -o %(ARToolKitPlusObjectFiles.FullPath)" />
-  </Target>
-  <Target Name="_LinkARToolKitPlus_"
-          Inputs="@(ARToolKitPlusObjectFiles)"
-          Outputs="$(ARToolKitPlusLibFile)"
-          DependsOnTargets="_CompileARToolKitPlus_">
-    <MakeDir Directories="$(ARToolKitPlusOutputPath)" />
-    <Exec Command="$(AR) -r -s $(ARToolKitPlusLibFile) @(ARToolKitPlusObjectFiles, ' ')" />
-  </Target>
-  <Target Name="BuildARToolKitPlus"
-          DependsOnTargets="_LinkARToolKitPlus_;_CompileARToolKitPlus_" />
-  
-  <!-- Freeframe -->
-  <Target Name="_CheckCodeBlocks_">
-    <Error Text="The CodeBlocks property must be set on the command line."
-           Condition="'$(CodeBlocks)' == ''" />
-  </Target>
-  
-  <Target Name="_CheckOpenCV_">
-    <Error Text="The OpenCV property must be set on the command line."
-           Condition="'$(OpenCV)' == ''" />
-  </Target>
-  
-  <Target Name="_CheckGit_">
-    <Error Text="The Git property must be set on the command line."
-           Condition="'$(Git)' == ''" />
-  </Target>
-  
-  <Target Name="_CheckFreeframeDependencies_"
-          DependsOnTargets="_CheckCodeBlocks_;_CheckOpenCV_" />
-          
-  <Target Name="BuildFreeframe"
-          Inputs="@(FreeframeProjects)"
-          Outputs="@(FreeframeProjects->'%(OutputDir)%(Filename).dll')"
-          DependsOnTargets="_CheckFreeframeDependencies_">
-    <Exec Command="&quot;$(CodeBlocks)&quot; --no-splash-screen --rebuild --target=Release &quot;%(FreeframeProjects.FullPath)&quot;" 
-          EnvironmentVariables="OpenCV=$(OpenCV)\" />
-    <Copy SourceFiles="@(FreeframeProjects->'%(RootDir)%(Directory)%(Filename).dll')" DestinationFiles="@(FreeframeProjects->'%(OutputDir)%(Filename).dll')"/>
-  </Target>
-  
-  <Target Name="CleanFreeframe"
-          DependsOnTargets="_CheckGit_">
-    <Exec Command="$(Git) clean -f -d -x -- %(FreeframeProjects.RelativeDir)" />
-  </Target>
-  
-  <!-- DirectShowFilter -->
-  <Target Name="_CheckBDS_">
-    <Error Text="The BDS property must be set on the command line."
-           Condition="'$(BDS)' == ''" />
-  </Target>
-  <Target Name="_CheckDSPACK_">
-    <Error Text="The DSPACK property must be set on the command line."
-           Condition="'$(DSPACK)' == ''" />
-  </Target>
-
-  <Target Name="BuildDirectShowFilter"
-          Inputs="@(DirectShowFilterProjects)"
-          Outputs="@(DirectShowFilterProjects->'%(OutputDir)%(Filename).ax')"
-          DependsOnTargets="_CheckBDS_;_CheckDSPACK_">
-    <Exec Command="$(MSBuildBinPath)\MSBuild.exe &quot;%(DirectShowFilterProjects.FullPath)&quot; /p:Configuration=Release"
-          EnvironmentVariables="BDS=$(BDS);DSPACK=$(DSPACK)" />
-    <Copy SourceFiles="@(DirectShowFilterProjects->'%(RootDir)%(Directory)%(Filename).ax')" DestinationFiles="@(DirectShowFilterProjects->'%(OutputDir)%(Filename).ax')"/>
-  </Target>
-  <Target Name="CleanDirectShowFilter"
-          DependsOnTargets="_CheckGit_">
-    <Exec Command="$(Git) clean -f -d -x -- %(DirectShowFilterProjects.RelativeDir)" />
   </Target>
 </Project>

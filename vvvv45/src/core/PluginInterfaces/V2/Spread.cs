@@ -74,11 +74,19 @@ namespace VVVV.PluginInterfaces.V2
         {
             get
             {
-                return FStream[VMath.Zmod(index, FStream.Length)];
+                var length = FStream.Length;
+                if (length > 0)
+                    return FStream[VMath.Zmod(index, length)];
+                else
+                    throw new IndexOutOfRangeException("The index was outside of the bounds of the spread.");
             }
             set
             {
-                FStream[VMath.Zmod(index, FStream.Length)] = value;
+                var length = FStream.Length;
+                if (length > 0)
+                    FStream[VMath.Zmod(index, length)] = value;
+                else
+                    throw new IndexOutOfRangeException("The index was outside of the bounds of the spread.");
             }
         }
         
@@ -132,6 +140,8 @@ namespace VVVV.PluginInterfaces.V2
         {
             return FStream.GetEnumerator();
         }
+
+        int IReadOnlyCollection<T>.Count => SliceCount;
         
         IEnumerator<T> IEnumerable<T>.GetEnumerator()
         {

@@ -5,7 +5,7 @@ using System.ComponentModel.Composition;
 namespace VVVV.PluginInterfaces.V2
 {
     [ComVisible(false)]
-    public sealed class OutputAttribute : IOAttribute
+    public class OutputAttribute : IOAttribute
     {
         public static readonly string DefaultBinName = " Bin Size";
         
@@ -35,15 +35,6 @@ namespace VVVV.PluginInterfaces.V2
             get;
             set;
         }
-        
-        /// <summary>
-        /// The position of the bin size used in ISpread&lt;ISpread&lt;T&gt;&gt; implementations.
-        /// </summary>
-        public int BinOrder
-        {
-            get;
-            set;
-        }
 
         /// <summary>
         /// Whether the pin is flushed after Evaluate or not.
@@ -58,6 +49,7 @@ namespace VVVV.PluginInterfaces.V2
         /// Whether or not feedback loops are allowed on this pin.
         /// By default disabled.
         /// </summary>
+        [Obsolete("You may want to implement IPluginFeedbackLoop. It allows you to specify in detail on which inputs this output depends on.", false)]
         public bool AllowFeedback
         {
             get;
@@ -70,7 +62,6 @@ namespace VVVV.PluginInterfaces.V2
             {
                 BinName = this.BinName,
                 BinVisibility = this.BinVisibility,
-                BinOrder = this.BinOrder,
                 AutoFlush = this.AutoFlush,
                 AllowFeedback = this.AllowFeedback
             };
@@ -82,9 +73,9 @@ namespace VVVV.PluginInterfaces.V2
             return "Output";
         }
 
-        public OutputAttribute GetBinSizeOutputAttribute()
+        public OutputAttribute GetBinSizeOutputAttribute(IIOContainer dataContainer)
         {
-            return new OutputAttribute(BinName == DefaultBinName ? string.Format("{0} Bin Size", Name) : BinName)
+            return new OutputAttribute(BinName == DefaultBinName ? GetBinSizeName(Name, dataContainer) : BinName)
             {
                 Order = BinOrder,
                 Visibility = BinVisibility

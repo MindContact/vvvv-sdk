@@ -39,9 +39,12 @@ namespace VVVV.Hosting.Factories
         protected ISolution FSolution;
         
         [ImportingConstructor]
-        public CSProjectFactory(CompositionContainer parentContainer, INodeInfoFactory nodeInfoFactory)
+        public CSProjectFactory(CompositionContainer parentContainer, INodeInfoFactory nodeInfoFactory, IHDEHost host)
             : base(parentContainer, ".csproj")
         {
+            // Set path to roslyn
+            var roslyLocation = Path.Combine(host.ExePath, "lib", "core", "roslyn");
+            Environment.SetEnvironmentVariable("ROSLYN_COMPILER_LOCATION", roslyLocation);
             // Listen to stuff added by nodelist.xml
             nodeInfoFactory.NodeInfoAdded += HandleNodeInfoAdded;
         }
@@ -57,24 +60,25 @@ namespace VVVV.Hosting.Factories
         protected override IEnumerable<INodeInfo> LoadNodeInfos(string filename)
         {
             var nodeInfos = new List<INodeInfo>();
-            
             // Normalize the filename
             filename = new Uri(filename).LocalPath;
-            
             var project = CreateProject(filename);
-            
-            // Do we need to compile it?
-            RecompileIfNeeded(project);
-            
-            LoadNodeInfosFromFile(project.AssemblyLocation, filename, ref nodeInfos, false);
-            
-            foreach (var nodeInfo in nodeInfos)
+            try
             {
-                nodeInfo.Type = NodeType.Dynamic;
-                nodeInfo.UserData = project;
-                nodeInfo.CommitUpdate();
+                // Do we need to compile it?
+                RecompileIfNeeded(project);
+
+                LoadNodeInfosFromFile(project.AssemblyLocation, filename, ref nodeInfos, false);
             }
-            
+            finally
+            {
+                foreach (var nodeInfo in nodeInfos)
+                {
+                    nodeInfo.Type = NodeType.Dynamic;
+                    nodeInfo.UserData = project;
+                    nodeInfo.CommitUpdate();
+                }
+            }
             return nodeInfos;
         }
         
@@ -447,7 +451,9 @@ namespace VVVV.Hosting.Factories
         static string NAME = "Name";
         static string CATEGORY = "Category";
         static string VERSION = "Version";
-        
+        static string HELP = "Help";
+        static string TAGS = "Tags";
+
         private INodeInfo FNodeInfo;
         private string FName;
         private string FCategory;
@@ -548,15 +554,31 @@ namespace VVVV.Hosting.Factories
             Debug.Assert(attribute.Name == PLUGIN_INFO);
             
             var namedArguments = attribute.NamedArguments;
-            
+
+            //when cloning from a template
+            //remove the dummy helps and tags
+            var removeHelpAndTags = false;
             var oldArguments = new List<NamedArgumentExpression>();
             foreach (var argument in namedArguments)
-                if (argument.Name == NAME || argument.Name == CATEGORY || argument.Name == VERSION)
+                if (argument.Name == NAME)
+                {
                     oldArguments.Add(argument);
-            
+                    var expr = (PrimitiveExpression)argument.Expression;
+                    if (expr.StringValue.StartsWith("\"Template"))
+                        removeHelpAndTags = true;
+                }
+                else if (argument.Name == CATEGORY || argument.Name == VERSION || argument.Name == HELP || argument.Name == TAGS)
+                    oldArguments.Add(argument);
+
             foreach (var argument in oldArguments)
-                namedArguments.Remove(argument);
-            
+                if (argument.Name == HELP || argument.Name == TAGS)
+                {
+                    if (removeHelpAndTags)
+                        namedArguments.Remove(argument);
+                }
+                else
+                    namedArguments.Remove(argument);
+
             namedArguments.Insert(0, new NamedArgumentExpression(NAME, new PrimitiveExpression(FName, FName)));
             namedArguments.Insert(1, new NamedArgumentExpression(CATEGORY, new PrimitiveExpression(FCategory, FCategory)));
             if (!string.IsNullOrEmpty(FVersion))

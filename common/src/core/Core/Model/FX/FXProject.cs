@@ -3,6 +3,7 @@ using System.CodeDom.Compiler;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Timers;
 
@@ -15,7 +16,7 @@ namespace VVVV.Core.Model.FX
     /// </summary>
     public class FXProject : Project
     {
-        private readonly string FIncludePath;
+        private readonly string[] FIncludePaths;
         
         public event EventHandler DoCompileEvent;
         
@@ -26,12 +27,12 @@ namespace VVVV.Core.Model.FX
             }
         }
         
-        public FXProject(string path, string includePath)
+        public FXProject(string path, string includePaths)
             : base(path)
         {
             //missusing a DotNetExecutable here..
             CompilerResults = new CompilerResults(null);
-            FIncludePath = includePath;
+            FIncludePaths = includePaths.Split(new char[1] { ';' }, StringSplitOptions.RemoveEmptyEntries);
             var document = DocumentFactory.CreateDocumentFromFile(LocalPath) as FXDocument;
             Documents.Add(document);
             UpdateReferences();
@@ -54,7 +55,7 @@ namespace VVVV.Core.Model.FX
             content.CopyTo(stream);
             if (Documents.Count > 1)
             {
-                using (var writer = new LeaveOpenStreamWriter(stream))
+                using (var writer = new StreamWriter(stream, Encoding.Default, 4096, true))
                 {
                     var fakechange = "//" + System.DateTime.Now.ToLongTimeString();
                     writer.Write(fakechange);
@@ -105,7 +106,6 @@ namespace VVVV.Core.Model.FX
             var projectPath = LocalPath;
             var refs = new List<FXReference>();
             var localPath = Path.GetDirectoryName(projectPath);
-            var includePath = FIncludePath;
             
             // Create an instance of StreamReader to read from a file.
             // The using statement also closes the StreamReader.
@@ -128,7 +128,8 @@ namespace VVVV.Core.Model.FX
                     {
                         match = globalIncludeRegExp.Match(line);
                         if (match.Success)
-                            TryToAddReference(includePath, match.Groups[1].Value, false, ref refs);
+                            foreach (var path in FIncludePaths)
+                                TryToAddReference(path, match.Groups[1].Value, false, ref refs);
                     }
                 }
             }

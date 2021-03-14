@@ -6,19 +6,19 @@ to the TERMS OF USAGE enclosed in license.txt
 -------------------------------------------------------------------
 
 
-install:
+manual install:
 - extract the vvvv directory from the .zip archive to a
   nice place on your harddisk.
 
-- start at least once setup.exe (needs admin rights!)
+- start at least once config.exe (needs admin rights!)
 
 - if you face troubles, see:
     http://vvvv.org/documentation/troubleshooting
 
-- run start_with_demo.bat to run vvvv with a demo patch
+- start vvvv.exe
 
-- start vvvv.exe to run a vanilla vvvv
-
+- if you're new, start here:
+    https://vvvv.org/documentation/getting-started
 
 
 more information
@@ -36,18 +36,17 @@ change log:
 
 
 system recommendations:
-- 500MHz Pentium III or better
-- Geforce-Class Graphics Card
-- three-button mouse 
-- windows XP, windows Vista, windows 7
-- .net4
+- Geforce/Radeon Class Graphics Card
+- Three-button mouse 
+- Windows Vista, 7, 8, 10
+- .net4.72
 - latest release of directX 9c
         
 
 
 uninstall:
 - before deleting the directory containing vvvv run 
-  setup.exe and click 'uninstall'
+  setup.exe and click 'Uninstall'
 
 
 

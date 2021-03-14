@@ -17,6 +17,7 @@ using System.Reactive.Subjects;
 using System.Drawing;
 using VVVV.Utils.Win32;
 using System.Windows.Forms;
+using com = System.Runtime.InteropServices.ComTypes;
 
 namespace VVVV.Hosting.IO.Streams
 {
@@ -42,7 +43,31 @@ namespace VVVV.Hosting.IO.Streams
             base.Flush(force);
         }
     }
-    
+
+    class CharOutStream : MemoryIOStream<char>
+    {
+        private readonly IStringOut FStringOut;
+
+        public CharOutStream(IStringOut stringOut)
+        {
+            FStringOut = stringOut;
+        }
+
+        public override void Flush(bool force = false)
+        {
+            if (force || IsChanged)
+            {
+                FStringOut.SliceCount = Length;
+                for (int i = 0; i < Length; i++)
+                {
+                    var value = this[i];
+                    FStringOut.SetString(i, value.ToString());
+                }
+            }
+            base.Flush(force);
+        }
+    }
+
     class EnumOutStream<T> : MemoryIOStream<T>
     {
         protected readonly IEnumOut FEnumOut;
@@ -80,7 +105,15 @@ namespace VVVV.Hosting.IO.Streams
         
         protected override void SetSlice(int index, EnumEntry value)
         {
-            FEnumOut.SetOrd(index, value.Index);
+            FEnumOut.SetString(index, value.Name);
+        }
+    }
+
+    internal static class DynamicAssemblyTypeHelpers
+    {
+        public static bool UsesDynamicAssembly(this Type type)
+        {
+            return type.Assembly.IsDynamic || (type.IsGenericType && type.GetGenericArguments().Any(t => UsesDynamicAssembly(t)));
         }
     }
     
@@ -89,18 +122,20 @@ namespace VVVV.Hosting.IO.Streams
         private readonly INodeOut FNodeOut;
         
         public NodeOutStream(INodeOut nodeOut)
-            : this(nodeOut, new DefaultConnectionHandler())
-        {
-            
-        }
+            : this(nodeOut, null)
+        {}
         
         public NodeOutStream(INodeOut nodeOut, IConnectionHandler handler)
         {
             FNodeOut = nodeOut;
-            FNodeOut.SetInterface(this);
-            FNodeOut.SetConnectionHandler(handler, this);
+            if (typeof(T).UsesDynamicAssembly())
+                FNodeOut.SetInterface(new DynamicTypeWrapper(this));
+            else
+                FNodeOut.SetInterface(this);
+            if (handler != null)
+                FNodeOut.SetConnectionHandler(handler, null);
         }
-        
+
         object IGenericIO.GetSlice(int index)
         {
             return this[VMath.Zmod(index, Length)];
@@ -128,6 +163,7 @@ namespace VVVV.Hosting.IO.Streams
         {
             FNodeOut = nodeOut;
             FNodeOut.SetInterface(FKeyboards.Stream);
+            SetLength(nodeOut.SliceCount);
         }
 
         public void Dispose()
@@ -139,16 +175,7 @@ namespace VVVV.Hosting.IO.Streams
         {
             if (force || IsChanged)
             {
-                FSubjects.ResizeAndDispose(Length);
-                FKeyboardStates.ResizeAndDismiss(Length);
-                FKeyboards.ResizeAndDismiss(
-                    Length,
-                    slice =>
-                    {
-                        var subject = FSubjects[slice];
-                        return new Keyboard(subject, true);
-                    }
-                );
+                SetLength(Length);
                 for (int i = 0; i < Length; i++)
                 {
                     var keyboardState = this.Buffer[i];
@@ -158,10 +185,10 @@ namespace VVVV.Hosting.IO.Streams
                         var subject = FSubjects[i];
                         var keyDowns = keyboardState.KeyCodes.Except(previousKeyboardState.KeyCodes);
                         foreach (var keyDown in keyDowns)
-                            subject.OnNext(new KeyDownNotification(keyDown));
+                            subject.OnNext(new KeyDownNotification(keyDown, this));
                         var keyUps = previousKeyboardState.KeyCodes.Except(keyboardState.KeyCodes);
                         foreach (var keyUp in keyUps)
-                            subject.OnNext(new KeyUpNotification(keyUp));
+                            subject.OnNext(new KeyUpNotification(keyUp, this));
                     }
                     FKeyboardStates[i] = keyboardState;
                 }
@@ -170,6 +197,24 @@ namespace VVVV.Hosting.IO.Streams
                 FNodeOut.MarkPinAsChanged();
             }
             base.Flush(force);
+        }
+
+        private void SetLength(int length)
+        {
+            if (length != Length)
+            {
+                FSubjects.ResizeAndDispose(length);
+                FKeyboardStates.ResizeAndDismiss(length);
+                FKeyboards.ResizeAndDismiss(
+                    length,
+                    slice =>
+                    {
+                        var subject = FSubjects[slice];
+                        return new Keyboard(subject, true);
+                    }
+                );
+                this.ResizeAndDismiss(length, () => KeyboardState.Empty);
+            }
         }
     }
 
@@ -184,6 +229,7 @@ namespace VVVV.Hosting.IO.Streams
         {
             FNodeOut = nodeOut;
             FNodeOut.SetInterface(FMouses.Stream);
+            SetLength(nodeOut.SliceCount);
         }
 
         public void Dispose()
@@ -195,16 +241,7 @@ namespace VVVV.Hosting.IO.Streams
         {
             if (force || IsChanged)
             {
-                FSubjects.ResizeAndDispose(Length);
-                FMouseStates.ResizeAndDismiss(Length);
-                FMouses.ResizeAndDismiss(
-                    Length,
-                    slice =>
-                    {
-                        var subject = FSubjects[slice];
-                        return new Mouse(subject);
-                    }
-                );
+                SetLength(Length);
                 for (int i = 0; i < Length; i++)
                 {
                     var mouseState = this.Buffer[i];
@@ -215,34 +252,34 @@ namespace VVVV.Hosting.IO.Streams
                         var v = new Vector2D(mouseState.X, mouseState.Y);
                         var position = ToMousePoint(v);
                         if (mouseState.X != previousMouseState.X || mouseState.Y != previousMouseState.Y)
-                            subject.OnNext(new MouseMoveNotification(position, FClientArea));
+                            subject.OnNext(new MouseMoveNotification(position, FClientArea, this));
                         if (mouseState.Buttons != previousMouseState.Buttons)
                         {
                             if (mouseState.IsLeft && !previousMouseState.IsLeft)
-                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.Left));
+                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.Left, this));
                             else if (!mouseState.IsLeft && previousMouseState.IsLeft)
-                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.Left));
+                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.Left, this));
                             if (mouseState.IsMiddle && !previousMouseState.IsMiddle)
-                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.Middle));
+                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.Middle, this));
                             else if (!mouseState.IsMiddle && previousMouseState.IsMiddle)
-                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.Middle));
+                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.Middle, this));
                             if (mouseState.IsRight && !previousMouseState.IsRight)
-                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.Right));
+                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.Right, this));
                             else if (!mouseState.IsRight && previousMouseState.IsRight)
-                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.Right));
+                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.Right, this));
                             if (mouseState.IsXButton1 && !previousMouseState.IsXButton1)
-                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.XButton1));
+                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.XButton1, this));
                             else if (!mouseState.IsXButton1 && previousMouseState.IsXButton1)
-                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.XButton1));
+                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.XButton1, this));
                             if (mouseState.IsXButton2 && !previousMouseState.IsXButton2)
-                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.XButton2));
+                                subject.OnNext(new MouseDownNotification(position, FClientArea, MouseButtons.XButton2, this));
                             else if (!mouseState.IsXButton2 && previousMouseState.IsXButton2)
-                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.XButton2));
+                                subject.OnNext(new MouseUpNotification(position, FClientArea, MouseButtons.XButton2, this));
                         }
                         if (mouseState.MouseWheel != previousMouseState.MouseWheel)
                         {
                             var wheelDelta = previousMouseState.MouseWheel - mouseState.MouseWheel;
-                            subject.OnNext(new MouseWheelNotification(position, FClientArea, wheelDelta * Const.WHEEL_DELTA));
+                            subject.OnNext(new MouseWheelNotification(position, FClientArea, wheelDelta * Const.WHEEL_DELTA, this));
                         }
                     }
                     FMouseStates[i] = mouseState;
@@ -252,6 +289,24 @@ namespace VVVV.Hosting.IO.Streams
                 FNodeOut.MarkPinAsChanged();
             }
             base.Flush(force);
+        }
+
+        private void SetLength(int length)
+        {
+            if (length != Length)
+            {
+                FSubjects.ResizeAndDispose(length);
+                FMouseStates.ResizeAndDismiss(length);
+                FMouses.ResizeAndDismiss(
+                    length,
+                    slice =>
+                    {
+                        var subject = FSubjects[slice];
+                        return new Mouse(subject);
+                    }
+                );
+                this.ResizeAndDismiss(length, () => MouseState.Create(0, 0, false, false, false, false, false, 0));
+            }
         }
 
         static Point ToMousePoint(Vector2D normV)
@@ -264,7 +319,7 @@ namespace VVVV.Hosting.IO.Streams
         static Size FClientArea = new Size(short.MaxValue, short.MaxValue);
     }
 
-    class RawOutStream : IOutStream<System.IO.Stream>
+    class RawOutStream : IOutStream<Stream>
     {
         private readonly IRawOut FRawOut;
         private int FLength;
@@ -273,6 +328,7 @@ namespace VVVV.Hosting.IO.Streams
         public RawOutStream(IRawOut rawOut)
         {
             FRawOut = rawOut;
+            FRawOut.SliceCount = FLength;
         }
 
         public void Flush(bool force = false)
@@ -301,34 +357,40 @@ namespace VVVV.Hosting.IO.Streams
             }
         }
 
-        public IStreamWriter<System.IO.Stream> GetWriter()
+        public IStreamWriter<Stream> GetWriter()
         {
             FMarkPinAsChanged = true;
             return new Writer(this);
         }
 
-        class Writer : IStreamWriter<System.IO.Stream>
+        class Writer : IStreamWriter<Stream>
         {
-            private RawOutStream FRawOutStream;
+            private readonly RawOutStream FRawOutStream;
+            private readonly IRawOut FRawOut;
 
             public Writer(RawOutStream rawOutStream)
             {
-                this.FRawOutStream = rawOutStream;
+                FRawOutStream = rawOutStream;
+                FRawOut = rawOutStream.FRawOut;
             }
 
-            public void Write(System.IO.Stream value, int stride = 1)
+            public void Write(Stream value, int stride = 1)
             {
-                this.FRawOutStream.FRawOut.SetData(this.Position, value != null ? new ComIStream(value) : null);
+                if (value != null)
+                {
+                    var comStream = value as com.IStream ?? new AdapterComStream(value);
+                    FRawOut.SetData(Position, comStream);
+                }
+                else
+                    FRawOut.SetData(Position, null);
                 this.Position += stride;
             }
 
-            public int Write(System.IO.Stream[] buffer, int index, int length, int stride = 1)
+            public int Write(Stream[] buffer, int index, int length, int stride = 1)
             {
                 var numSlicesToWrite = StreamUtils.GetNumSlicesAhead(this, index, length, stride);
-                for (int i = index; i < numSlicesToWrite; i++)
-                {
+                for (int i = index; i < index + numSlicesToWrite; i++)
                     Write(buffer[i], stride);
-                }
                 return numSlicesToWrite;
             }
 
@@ -368,7 +430,7 @@ namespace VVVV.Hosting.IO.Streams
         {
             foreach (var resource in this)
             {
-                resource.UpdateResource(device);
+                resource?.UpdateResource(device);
             }
         }
 
@@ -377,6 +439,8 @@ namespace VVVV.Hosting.IO.Streams
             var isDx9ExDevice = device is DeviceEx;
             foreach (var resource in this)
             {
+                if (resource == null)
+                    continue;
                 // If we should destroy only unmanaged resources (those in the default pool)
                 // do so only if we're on DirectX9 and the resource is in the default pool.
                 // In case of DirectX9Ex where all resources are in the default pool we don't
@@ -418,7 +482,7 @@ namespace VVVV.Hosting.IO.Streams
         {
             get
             {
-                return this[slice][device];
+                return this[slice]?[device];
             }
         }
     }

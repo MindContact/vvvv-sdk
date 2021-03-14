@@ -24,14 +24,16 @@ namespace VVVV.Utils.IO
             FScheduler = scheduler;
         }
 
-        public void Update(TSource source)
+        public bool Update(TSource source)
         {
             if (source != FSource)
             {
                 Unsubscribe();
                 FSource = source;
                 Subscribe();
+                return true;
             }
+            return false;
         }
 
         public void UpdateSelector(Func<TSource, IObservable<TNotification>> selector)
@@ -103,6 +105,9 @@ namespace VVVV.Utils.IO
 
         private void UpdateSource(TSource source)
         {
+            if (FEnumerator != null && FEnumerator.MoveNext())
+                foreach (var item in FEnumerator.Current)
+                    FNotifications.Enqueue(item);
             if (source != FSource)
             {
                 Unsubscribe();
@@ -111,9 +116,6 @@ namespace VVVV.Utils.IO
                     FEnumerator = FSelector(FSource).Chunkify()
                         .GetEnumerator();
             }
-            if (FEnumerator != null && FEnumerator.MoveNext())
-                foreach (var item in FEnumerator.Current)
-                    FNotifications.Enqueue(item);
         }
 
         public void Dispose()
@@ -128,7 +130,6 @@ namespace VVVV.Utils.IO
                 FEnumerator.Dispose();
                 FEnumerator = null;
             }
-            FNotifications.Clear();
         }
     }
 }

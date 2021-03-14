@@ -11,6 +11,22 @@ namespace VVVV.Nodes.Texture.HTML
 {
     public class WebClient : CefClient
     {
+        public class RequestContextHandler : CefRequestContextHandler
+        {
+            protected override CefCookieManager GetCookieManager()
+            {
+                return null;
+            }
+        }
+
+        class ContextMenuHandler : CefContextMenuHandler
+        {
+            protected override void OnBeforeContextMenu(CefBrowser browser, CefFrame frame, CefContextMenuParams state, CefMenuModel model)
+            {
+                model.Clear();
+            }
+        }
+
         class RenderHandler : CefRenderHandler
         {
             private readonly HTMLTextureRenderer FRenderer;
@@ -22,10 +38,7 @@ namespace VVVV.Nodes.Texture.HTML
 
             protected override bool GetRootScreenRect(CefBrowser browser, ref CefRectangle rect)
             {
-                rect.X = rect.Y = 0;
-                rect.Width = FRenderer.Size.Width;
-                rect.Height = FRenderer.Size.Height;
-                return true;
+                return false;
             }
 
             protected override bool GetViewRect(CefBrowser browser, ref CefRectangle rect)
@@ -41,9 +54,9 @@ namespace VVVV.Nodes.Texture.HTML
                 return base.GetScreenPoint(browser, viewX, viewY, ref screenX, ref screenY);
             }
 
-            protected override void OnCursorChange(CefBrowser browser, IntPtr cursorHandle)
+            protected override void OnCursorChange(CefBrowser browser, IntPtr cursorHandle, CefCursorType type, CefCursorInfo customCursorInfo)
             {
-                
+
             }
 
             protected override void OnPopupShow(CefBrowser browser, bool show)
@@ -60,7 +73,7 @@ namespace VVVV.Nodes.Texture.HTML
             {
                 switch (type) {
                     case CefPaintElementType.View:
-                        FRenderer.Paint(dirtyRects, buffer, width * 4);
+                        FRenderer.Paint(dirtyRects, buffer, width * 4, width, height);
                         break;
                     case CefPaintElementType.Popup:
                         break;
@@ -72,11 +85,21 @@ namespace VVVV.Nodes.Texture.HTML
                 return false;
             }
 
-            protected override void OnScrollOffsetChanged(CefBrowser browser)
+            protected override void OnScrollOffsetChanged(CefBrowser browser, double x, double y)
             {
                 // Do not report the change as long as the renderer is busy loading content
                 if (!FRenderer.IsLoading)
                     FRenderer.UpdateDocumentSize();
+            }
+
+            protected override CefAccessibilityHandler GetAccessibilityHandler()
+            {
+                return null;
+            }
+
+            protected override void OnImeCompositionRangeChanged(CefBrowser browser, CefRange selectedRange, CefRectangle[] characterBounds)
+            {
+                
             }
         }
 
@@ -181,7 +204,7 @@ namespace VVVV.Nodes.Texture.HTML
                 FRenderer = renderer;
             }
 
-            protected override bool OnBeforePopup(CefBrowser browser, CefFrame frame, string targetUrl, string targetFrameName, CefPopupFeatures popupFeatures, CefWindowInfo windowInfo, ref CefClient client, CefBrowserSettings settings, ref bool noJavascriptAccess)
+            protected override bool OnBeforePopup(CefBrowser browser, CefFrame frame, string targetUrl, string targetFrameName, CefWindowOpenDisposition targetDisposition, bool userGesture, CefPopupFeatures popupFeatures, CefWindowInfo windowInfo, ref CefClient client, CefBrowserSettings settings, ref bool noJavascriptAccess)
             {
                 FRenderer.LoadUrl(targetUrl);
                 return true;
@@ -197,13 +220,6 @@ namespace VVVV.Nodes.Texture.HTML
             {
                 FRenderer.Detach();
                 base.OnBeforeClose(browser);
-            }
-        }
-
-        class DomEventEventListener : CefDomEventListener
-        {
-            protected override void HandleEvent(CefDomEvent e)
-            {
             }
         }
         
@@ -251,10 +267,28 @@ namespace VVVV.Nodes.Texture.HTML
                 FRenderer = renderer;
             }
 
-            protected override bool OnConsoleMessage(CefBrowser browser, string message, string source, int line)
+            protected override bool OnConsoleMessage(CefBrowser browser, CefLogSeverity level, string message, string source, int line)
             {
-                FRenderer.Logger.Log(LogType.Message, string.Format("{0} ({1}:{2})", message, source, line));
-                return base.OnConsoleMessage(browser, message, source, line);
+                FRenderer.Logger.Log(ToLogType(level), string.Format("{0} ({1}:{2})", message, source, line));
+                return base.OnConsoleMessage(browser, level, message, source, line);
+            }
+
+            static LogType ToLogType(CefLogSeverity level)
+            {
+                switch (level)
+                {
+                    case CefLogSeverity.Verbose:
+                        return LogType.Debug;
+                    case CefLogSeverity.Info:
+                        return LogType.Message;
+                    case CefLogSeverity.Warning:
+                        return LogType.Warning;
+                    case CefLogSeverity.Error:
+                    case CefLogSeverity.ErrorReport:
+                        return LogType.Error;
+                    default:
+                        return LogType.Message;
+                }
             }
         }
 
@@ -265,6 +299,7 @@ namespace VVVV.Nodes.Texture.HTML
         private readonly CefLoadHandler FLoadHandler;
         private readonly CefKeyboardHandler FKeyboardHandler;
         private readonly CefDisplayHandler FDisplayHandler;
+        private readonly CefContextMenuHandler FContextMenuHandler;
         
         public WebClient(HTMLTextureRenderer renderer)
         {
@@ -275,8 +310,14 @@ namespace VVVV.Nodes.Texture.HTML
             FLoadHandler = new LoadHandler(renderer);
             FKeyboardHandler = new KeyboardHandler();
             FDisplayHandler = new DisplayHandler(renderer);
+            FContextMenuHandler = new ContextMenuHandler();
         }
-        
+
+        protected override CefContextMenuHandler GetContextMenuHandler()
+        {
+            return FContextMenuHandler;
+        }
+
         protected override CefDisplayHandler GetDisplayHandler()
         {
             return FDisplayHandler;
@@ -349,6 +390,19 @@ namespace VVVV.Nodes.Texture.HTML
                         var width = arguments.GetInt(2);
                         var height = arguments.GetInt(3);
                         FRenderer.OnDocumentSize(frame, width, height);
+                    }
+                    return true;
+                case "receive-data":
+                    identifier = message.GetFrameIdentifier();
+                    frame = browser.GetFrame(identifier);
+                    if (frame != null)
+                    {
+                        var arguments = message.Arguments;
+                        var type = arguments.GetString(2);
+                        if (type == "list")
+                            FRenderer.OnReceiveData(frame, arguments.GetList(3));
+                        else if (type == "dict")
+                            FRenderer.OnReceiveData(frame, arguments.GetDictionary(3));
                     }
                     return true;
                 default:

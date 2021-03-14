@@ -1,11 +1,7 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
-using System.IO;
 using System.Linq;
-using System.Threading;
-using System.Threading.Tasks.Schedulers;
 using VVVV.Core.Logging;
 using VVVV.PluginInterfaces.V1;
 using VVVV.PluginInterfaces.V2;
@@ -73,7 +69,6 @@ namespace VVVV.Nodes.ImagePlayer
         
         private readonly ISpread<ImagePlayer> FImagePlayers = new Spread<ImagePlayer>(0);
         private readonly ILogger FLogger;
-        private readonly IOTaskScheduler FIOTaskScheduler = new IOTaskScheduler();
         private readonly MemoryPool FMemoryPool = new MemoryPool();
         private readonly TexturePool FTexturePool = new TexturePool();
         private readonly IDXDeviceService FDeviceService;
@@ -91,7 +86,6 @@ namespace VVVV.Nodes.ImagePlayer
         		FThreadsIOConfig[index], 
         		FThreadsTextureConfig[index], 
         		FLogger, 
-        		FIOTaskScheduler, 
         		FMemoryPool,
                 FTexturePool,
                 FDeviceService
@@ -113,9 +107,23 @@ namespace VVVV.Nodes.ImagePlayer
                 .CombineWith(FVisibleFramesIn)
                 .CombineWith(FPreloadFramesIn)
                 .CombineWith(FReloadIn);
-            
-            FImagePlayers.Resize(spreadMax, CreateImagePlayer, DestroyImagePlayer);
-            
+
+            List<ImagePlayer> oldPlayers = FImagePlayers.ToList();
+
+            FImagePlayers.SliceCount = spreadMax;
+            for (int i = 0; i < spreadMax; i++)
+            {
+                var player = oldPlayers.FirstOrDefault(p => p.Directories.SpreadEqual(FDirectoryIn[i]));
+                if (player == null)
+                    player = CreateImagePlayer(i);
+                else
+                    oldPlayers.Remove(player);
+
+                FImagePlayers[i] = player;
+            }
+            foreach (var p in oldPlayers)
+                DestroyImagePlayer(p);
+
             FImagePlayers.SliceCount = spreadMax;
             FTextureOut.SliceCount = spreadMax;
             FTextureWidthOut.SliceCount = spreadMax;
@@ -209,7 +217,6 @@ namespace VVVV.Nodes.ImagePlayer
                 }
             }
             FImagePlayers.SliceCount = 0;
-            FIOTaskScheduler.Dispose();
             FMemoryPool.Dispose();
             FTexturePool.Dispose();
         }

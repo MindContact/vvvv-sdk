@@ -4,7 +4,15 @@ using System.Runtime.InteropServices;
 namespace VVVV.PluginInterfaces.V2
 {
     /// <summary>
-    /// Events occur in the order as defined here.
+    /// Events occur in this order:
+    /// OnPrepareGraph
+    /// OnUpdateView
+    /// OnRender
+    /// OnPresent
+    /// OnDebug
+    /// OnNetworkSync
+    /// OnResetCache
+    /// 
     /// If PresentUpFront is true, OnPresent will be the first event.
     /// If this is a boygroup client, OnNetworkSync will be the last event.
     /// </summary>
@@ -29,5 +37,7 @@ namespace VVVV.PluginInterfaces.V2
         event EventHandler OnNetworkSync;
         
         event EventHandler OnResetCache;
+
+        event EventHandler OnInitFrame;
     }
 }

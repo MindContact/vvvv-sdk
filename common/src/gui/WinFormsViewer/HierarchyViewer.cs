@@ -1,24 +1,12 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Runtime.CompilerServices;
-using System.Windows;
-using System.ComponentModel;
 using System.Drawing;
 using System.Windows.Forms;
-using System.Collections;
 using System.Collections.Generic;
 
 using VVVV.Core;
-using VVVV.Core.Logging;
-using VVVV.Core.Collections.Sync;
-using VVVV.Core.Commands;
-using VVVV.Core.Menu;
-using VVVV.Core.View;
 using VVVV.Core.Viewer;
-
-using VVVV.HDE.GraphicalEditing;
 using VVVV.Core.Viewer.GraphicalEditor;
-using VVVV.Core.View.GraphicalEditor;
 
 namespace VVVV.HDE.Viewer.WinFormsViewer
 {
@@ -29,6 +17,7 @@ namespace VVVV.HDE.Viewer.WinFormsViewer
         private MapperHierarchyNode FRootNode;
         private int FUpdateLockCount;
         private bool FNeedsUpdate;
+        private float FDPIFactor;
         public Dictionary<int, float> DepthOffsets = new Dictionary<int, float>();
         
         public new event ClickHandler MouseClick;
@@ -62,7 +51,7 @@ namespace VVVV.HDE.Viewer.WinFormsViewer
                 return FRootNode;
             }
         }
-        
+
         #region initialization
         public HierarchyViewer()
         {
@@ -73,9 +62,12 @@ namespace VVVV.HDE.Viewer.WinFormsViewer
 
             FCanvas = FGraphEditor as ICanvas;
             Debug.Assert(FCanvas != null);
-            
-            
-            
+
+            using (var g = this.CreateGraphics())
+            {
+                FDPIFactor = (g.DpiY / 96.0f);
+            }
+
             FCanvas.Root = FCanvas.CreateDot(null);
             Background = FCanvas.CreateDot(null);
             Foreground = FCanvas.CreateDot(null);
@@ -83,6 +75,11 @@ namespace VVVV.HDE.Viewer.WinFormsViewer
             FGraphEditor.MouseDown += FGraphEditorMouseDown;
             FGraphEditor.MouseClick += FGraphEditorMouseClick;
             FGraphEditor.Resize += FGraphEditorResize;
+        }
+
+        public int DIP(float value)
+        {
+            return (int)(value * FDPIFactor);
         }
 
         private void ToolTipPopupHandler(object sender, PopupEventArgs e)

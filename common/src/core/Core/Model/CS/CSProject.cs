@@ -13,14 +13,7 @@ namespace VVVV.Core.Model.CS
     // TODO: Parsing of references and documents is not complete. Missing events (doc added/removed, ref added/removed..)
     public class CSProject : MsBuildProject
     {
-        private static CSharpCodeProvider FProvider;
-
-        static CSProject()
-        {
-            var options = new Dictionary<string, string>();
-            options.Add("CompilerVersion", "v4.0");
-            FProvider = new CSharpCodeProvider(options);
-        }
+        private static readonly CSharpCodeProvider FProvider = new Microsoft.CodeDom.Providers.DotNetCompilerPlatform.CSharpCodeProvider();
 
         public CSProject(string path)
             : base(path)
@@ -114,7 +107,7 @@ namespace VVVV.Core.Model.CS
                 where doc is CSDocument
                 select doc.LocalPath;
 
-            var assemblyLocation = GetFreshAssemblyLocation(LocalPath);
+            var assemblyLocation = GetFreshAssemblyLocation();
             var assemblyBaseDir = Path.GetDirectoryName(assemblyLocation);
 
             if (!Directory.Exists(assemblyBaseDir))
@@ -125,16 +118,15 @@ namespace VVVV.Core.Model.CS
             compilerParams.OutputAssembly = assemblyLocation;
             compilerParams.GenerateExecutable = false;
             compilerParams.GenerateInMemory = false;
+            compilerParams.IncludeDebugInformation = true;
+            compilerParams.CompilerOptions += "/unsafe ";
 
             switch (BuildConfiguration)
             {
                 case BuildConfiguration.Release:
-                    compilerParams.IncludeDebugInformation = false;
-                    compilerParams.CompilerOptions += "/unsafe /optimize ";
+                    compilerParams.CompilerOptions += "/optimize ";
                     break;
                 case BuildConfiguration.Debug:
-                    compilerParams.IncludeDebugInformation = true;
-                    compilerParams.CompilerOptions += "/unsafe";
                     break;
             }
 

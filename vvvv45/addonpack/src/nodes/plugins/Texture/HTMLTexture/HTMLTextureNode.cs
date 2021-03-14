@@ -1,24 +1,22 @@
 ﻿using System;
-using VVVV.PluginInterfaces.V2;
-using VVVV.PluginInterfaces.V2.EX9;
-using Xilium.CefGlue;
-using VVVV.Utils.VMath;
-using VVVV.Core.Logging;
 using System.ComponentModel.Composition;
-using VVVV.Utils.IO;
 using System.Xml.Linq;
-using EX9 = SlimDX.Direct3D9;
 using System.Drawing;
 using System.IO;
+using VVVV.Core.Logging;
 using VVVV.PluginInterfaces.V1;
+using VVVV.PluginInterfaces.V2;
+using VVVV.Utils.IO;
+using VVVV.Utils.VMath;
+using VL.Lib.Basics.Imaging;
 
 namespace VVVV.Nodes.Texture.HTML
 {
-	[PluginInfo(Name = "HTMLTexture", 
-                Category = "EX9.Texture", 
+    [PluginInfo(Name = "HTMLView", 
+                Category = "Image", 
                 Version = "String", 
                 Credits = "Development sponsored by http://meso.net",
-                Tags = "browser, web, html, javascript, chrome, chromium, flash, webgl")]
+                Tags = "browser, web, javascript, chrome, chromium, flash, webgl")]
     public class HTMLTextureStringNode : HTMLTextureNode
     {
         [Input("HTML", DefaultString = HTMLTextureRenderer.DEFAULT_CONTENT)]
@@ -36,11 +34,11 @@ namespace VVVV.Nodes.Texture.HTML
         }
     }
 
-    [PluginInfo(Name = "HTMLTexture", 
-                Category = "EX9.Texture", 
+    [PluginInfo(Name = "HTMLView", 
+                Category = "Image", 
                 Version = "URL", 
                 Credits = "Development sponsored by http://meso.net",
-                Tags = "browser, web, html, javascript, chrome, chromium, flash, webgl")]
+                Tags = "browser, web, javascript, chrome, chromium, flash, webgl")]
     public class HTMLTextureUrlNode : HTMLTextureNode
     {
         [Input("Url", DefaultString = HTMLTextureRenderer.DEFAULT_URL)]
@@ -52,7 +50,7 @@ namespace VVVV.Nodes.Texture.HTML
         }
     }
 
-    public abstract class HTMLTextureNode : IPluginEvaluate, IDisposable, IPartImportsSatisfiedNotification, IPluginDXTexture2
+    public abstract class HTMLTextureNode : IPluginEvaluate, IDisposable, IPartImportsSatisfiedNotification
     {
         [Input("Reload", IsBang = true)]
         public ISpread<bool> FReloadIn;
@@ -60,6 +58,8 @@ namespace VVVV.Nodes.Texture.HTML
         public ISpread<int> FWidthIn;
         [Input("Height", DefaultValue = HTMLTextureRenderer.DEFAULT_HEIGHT)]
         public ISpread<int> FHeightIn;
+        [Input("Frame Rate", MinValue = HTMLTextureRenderer.MIN_FRAME_RATE, MaxValue = HTMLTextureRenderer.MAX_FRAME_RATE, DefaultValue = 60)]
+        public ISpread<int> FFrameRateIn;
         [Input("Zoom Level")]
         public ISpread<double> FZoomLevelIn;
         [Input("Mouse Event")]
@@ -78,7 +78,7 @@ namespace VVVV.Nodes.Texture.HTML
         public ISpread<bool> FEnabledIn;
 
         [Output("Output")]
-        public IDXTextureOut FTextureOut;
+        public ISpread<IObservable<IImage>> FImageOut;
         [Output("Root Element")]
         public ISpread<XElement> FRootElementOut;
         [Output("Document")]
@@ -89,10 +89,16 @@ namespace VVVV.Nodes.Texture.HTML
         public ISpread<int> FDocumentHeightOut;
         [Output("Is Loading")]
         public ISpread<bool> FIsLoadingOut;
+        [Output("Loaded")]
+        public ISpread<bool> FLoadedOut;
         [Output("Current Url")]
         public ISpread<string> FCurrentUrlOut;
         [Output("Error Text")]
         public ISpread<string> FErrorTextOut;
+        [Output("On Data")]
+        public ISpread<bool> FOnDataOut;
+        [Output("Data")]
+        public ISpread<XElement> FDataOut;
 
         [Import]
         protected ILogger FLogger;
@@ -101,25 +107,36 @@ namespace VVVV.Nodes.Texture.HTML
 
         public virtual void OnImportsSatisfied()
         {
-            FTextureOut.SliceCount = 0;
+            FImageOut.SliceCount = 0;
         }
 
         public void Evaluate(int spreadMax)
         {
-            FWebRenderers.ResizeAndDispose(spreadMax, () => new HTMLTextureRenderer(FLogger));
+            FWebRenderers.ResizeAndDispose(spreadMax, (i) => new HTMLTextureRenderer(FLogger, FFrameRateIn[i]));
 
-            FTextureOut.SliceCount = spreadMax;
+            FImageOut.SliceCount = spreadMax;
             FRootElementOut.SliceCount = spreadMax;
             FDomOut.SliceCount = spreadMax;
             FDocumentWidthOut.SliceCount = spreadMax;
             FDocumentHeightOut.SliceCount = spreadMax;
             FIsLoadingOut.SliceCount = spreadMax;
+            FLoadedOut.SliceCount = spreadMax;
             FErrorTextOut.SliceCount = spreadMax;
             FCurrentUrlOut.SliceCount = spreadMax;
+            FOnDataOut.SliceCount = spreadMax;
+            FDataOut.SliceCount = spreadMax;
 
             for (int i = 0; i < spreadMax; i++)
             {
                 var webRenderer = FWebRenderers[i];
+
+                var frameRate = VMath.Clamp(FFrameRateIn[i], HTMLTextureRenderer.MIN_FRAME_RATE, HTMLTextureRenderer.MAX_FRAME_RATE);
+                if (frameRate != webRenderer.FrameRate)
+                {
+                    webRenderer.Dispose();
+                    webRenderer = new HTMLTextureRenderer(FLogger, frameRate);
+                    FWebRenderers[i] = webRenderer;
+                }
 
                 // Check enabled state
                 webRenderer.Enabled = FEnabledIn[i];
@@ -144,8 +161,10 @@ namespace VVVV.Nodes.Texture.HTML
                     webRenderer.Reload();
 
                 // Set outputs
+                FImageOut[i] = webRenderer.Images;
                 FErrorTextOut[i] = webRenderer.CurrentError;
                 FIsLoadingOut[i] = webRenderer.IsLoading;
+                FLoadedOut[i] = webRenderer.Loaded;
                 // As long as the renderer is in the loading state stick to the old values
                 if (!webRenderer.IsLoading)
                 {
@@ -161,9 +180,16 @@ namespace VVVV.Nodes.Texture.HTML
                     FDocumentHeightOut[i] = documentSize.Height;
                     FCurrentUrlOut[i] = webRenderer.CurrentUrl;
                 }
-            }
 
-            FTextureOut.MarkPinAsChanged();
+                XElement outputs;
+                if (webRenderer.TryReceive(out outputs))
+                {
+                    FDataOut[i] = outputs;
+                    FOnDataOut[i] = true;
+                }
+                else
+                    FOnDataOut[i] = false;
+            }
         }
 
         protected abstract void LoadContent(HTMLTextureRenderer renderer, Size size, int slice);
@@ -172,24 +198,6 @@ namespace VVVV.Nodes.Texture.HTML
         {
             foreach (var renderer in FWebRenderers)
                 renderer.Dispose();
-        }
-
-        EX9.Texture IPluginDXTexture2.GetTexture(IDXTextureOut pin, EX9.Device device, int slice)
-        {
-            var renderer = FWebRenderers[slice];
-            return renderer.GetTexture(device);
-        }
-
-        void IPluginDXResource.UpdateResource(IPluginOut pin, EX9.Device device)
-        {
-            foreach (var renderer in FWebRenderers)
-                renderer.UpdateResources(device);
-        }
-
-        void IPluginDXResource.DestroyResource(IPluginOut pin, EX9.Device device, bool onlyUnmanaged)
-        {
-            foreach (var renderer in FWebRenderers)
-                renderer.DestroyResources(device);
         }
     }
 }

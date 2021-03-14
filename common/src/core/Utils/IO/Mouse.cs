@@ -7,14 +7,22 @@ using System.Windows.Forms;
 
 namespace VVVV.Utils.IO
 {
-    public class Mouse
+    public interface IMouse
     {
-        public static readonly Mouse Empty = new Mouse(Observable.Never<MouseNotification>(), false);
+        IObservable<MouseNotification> MouseNotifications { get; }
+        MouseButtons PressedButtons { get; }
+    }
+
+    public class Mouse : IMouse
+    {
+        public static readonly Mouse Empty = new Mouse(Observable.Never<MouseNotification>(), false, false);
 
         public readonly IObservable<MouseNotification> MouseNotifications;
         private MouseButtons FPressedButtons;
 
-        public Mouse(IObservable<MouseNotification> mouseNotifications, bool injectMouseClicks = true)
+        IObservable<MouseNotification> IMouse.MouseNotifications => MouseNotifications;
+
+        public Mouse(IObservable<MouseNotification> mouseNotifications, bool injectMouseClicks = true, bool keepSingleSubscription = true)
         {
             mouseNotifications = mouseNotifications
                 .Do(n =>
@@ -29,13 +37,18 @@ namespace VVVV.Utils.IO
                                 var mouseUp = n as MouseUpNotification;
                                 FPressedButtons &= ~mouseUp.Buttons;
                                 break;
+                            case MouseNotificationKind.DeviceLost:
+                                FPressedButtons = MouseButtons.None;
+                                break;
                             default:
                                 break;
                         }
                     });
             if (injectMouseClicks)
                 mouseNotifications = InjectMouseClicks(mouseNotifications);
-            MouseNotifications = mouseNotifications.Publish().RefCount();
+            if (keepSingleSubscription)
+                mouseNotifications = mouseNotifications.Publish().RefCount();
+            MouseNotifications = mouseNotifications;
         }
 
         /// <summary>
@@ -48,8 +61,6 @@ namespace VVVV.Utils.IO
 
         private static IObservable<MouseNotification> InjectMouseClicks(IObservable<MouseNotification> notifications)
         {
-            // Keep only a single subscription
-            notifications = notifications.Publish().RefCount();
             // A mouse down followed by a mouse up in the same area with the same button is considered a single click.
             // Each subsequnt mouse down in the same area in a specific time interval with the same button produces
             // another click with an increased click count.
@@ -62,7 +73,7 @@ namespace VVVV.Utils.IO
                         .Where(b => b.Buttons == down.Buttons &&
                                     Math.Abs(b.Position.X - down.Position.X) <= SystemInformation.DoubleClickSize.Width &&
                                     Math.Abs(b.Position.Y - down.Position.Y) <= SystemInformation.DoubleClickSize.Height)
-                        .Select(x => Tuple.Create(new MouseClickNotification(down.Position, down.ClientArea, down.Buttons, 1), i));
+                        .Select(x => Tuple.Create(new MouseClickNotification(down.Position, down.ClientArea, down.Buttons, 1, down.Sender), i));
                     var subsequentClicks =
                             notifications.OfType<MouseDownNotification>()
                                 .TakeWhile(n => n.Buttons == down.Buttons &&
@@ -70,7 +81,7 @@ namespace VVVV.Utils.IO
                                             Math.Abs(n.Position.Y - down.Position.Y) <= SystemInformation.DoubleClickSize.Height)
                                 .TimeInterval()
                                 .TakeWhile(x => x.Interval.TotalMilliseconds <= SystemInformation.DoubleClickTime)
-                                .Select((x, j) => Tuple.Create(new MouseClickNotification(down.Position, down.ClientArea, down.Buttons, j + 2), i));
+                                .Select((x, j) => Tuple.Create(new MouseClickNotification(down.Position, down.ClientArea, down.Buttons, j + 2, down.Sender), i));
                     return singleClick.Concat(subsequentClicks);
                 }
                 )
